@@ -1,11 +1,13 @@
 import { Command } from "commander";
 import { Kage, Polygons } from "@kurgm/kage-engine";
 import { parse } from "svg-parser";
-
+import * as os from "os";
 import * as fs from "fs";
-
+import * as cluster from "cluster";
 import * as ClipperLib from "clipper-lib";
-import { precisionRound } from "./utils";
+import { precisionRound, postProcessPolygon } from "./utils";
+
+const numCPUs = os.cpus().length;
 
 const kage = new Kage();
 const program = new Command();
@@ -58,88 +60,16 @@ const TEST_SVG = `
 </svg>
 `;
 
-const postProcessPolygon = (svg: string) => {
-  const parsedSVG = parse(svg);
-  const polygonsPoints = parsedSVG.children[0].children[0].children
-    .filter(({ tagName }) => tagName === "polygon")
-    .map(({ properties }) => properties.points.trim()) as string[];
+const END_MESSAGE = 1;
+const SVG_PATHS_MESSAGE = 2;
 
-  let count = 0;
-  const paths = [] as { X: number; Y: number }[][];
-  for (let polygon of polygonsPoints) {
-    const _polygon = [] as { X: number; Y: number }[];
-
-    let invalidPath = false;
-    for (let pair of polygon.split(" ")) {
-      const [x, y] = pair.split(",").map((num) => Number(num));
-      if (
-        isNaN(x) ||
-        isNaN(y) ||
-        x === Number.NEGATIVE_INFINITY ||
-        x === Number.POSITIVE_INFINITY ||
-        y === Number.NEGATIVE_INFINITY ||
-        y === Number.POSITIVE_INFINITY
-      ) {
-        console.log("isNaN! ", x, y);
-        invalidPath = true;
-        break;
-      }
-      const intPoint = new ClipperLib.IntPoint(x, y);
-      _polygon.push(intPoint);
-    }
-    if (invalidPath) continue;
-    if (ClipperLib.Clipper.Orientation(_polygon)) _polygon.reverse();
-    paths.push(_polygon);
-    count += 1;
+function chunk<Type>(array: Type[], chunkSize: number) {
+  var tempArray = [];
+  for (var i = 0; i < array.length; i += chunkSize) {
+    tempArray.push(array.slice(i, i + chunkSize));
   }
-
-  //   if (!ClipperLib.Clipper.Orientation(paths))
-  //     ClipperLib.Clipper.ReversePaths(paths);
-
-  // flatten?
-
-  const concat = (paths: { X: number; Y: number }[][]) => {
-    const res = [];
-    for (let i = 0; i < paths.length; i++) {
-      if (!paths[i].length) continue;
-      res.push(
-        `M ${paths[i][0].X * SCALE_FACTOR} ${precisionRound(
-          (200 - paths[i][0].Y) * SCALE_FACTOR,
-          2
-        )}`
-      );
-
-      //   res.push(`M ${paths[i][0].X} ${paths[i][0].Y}`);
-
-      for (let j = 1; j < paths[i].length; j++) {
-        res.push(
-          `L ${paths[i][j].X * SCALE_FACTOR} ${precisionRound(
-            (200 - paths[i][j].Y) * SCALE_FACTOR,
-            2
-          )}`
-        );
-
-        // res.push(`L ${paths[i][j].X} ${paths[i][j].Y}`);
-      }
-      res.push("Z");
-    }
-    return res;
-  };
-
-  let res = [];
-  try {
-    res = concat(
-      ClipperLib.Clipper.SimplifyPolygons(
-        paths,
-        ClipperLib.PolyFillType.pftNonZero
-      )
-    );
-  } catch (error) {
-    console.error(error);
-    res = concat(paths);
-  }
-  return res.join(" ");
-};
+  return tempArray;
+}
 
 /* const postProcessCurve = (svg: string) => {
   const parsedSVG = parse(svg);
@@ -156,39 +86,128 @@ const postProcess = (svg: string, curve: boolean) => {
   else return postProcessCurve(svg);
 }; */
 
+const workerProcess = () => {
+  console.log(`Worker ${process.pid} started`);
+
+  process.on(
+    "message",
+    function ({
+      msg: { index, output, names, dump_file_name },
+    }: {
+      msg: {
+        index: number;
+        output: string;
+        dump_file_name: string;
+        names: string[];
+      };
+    }) {
+      console.log(
+        `Worker ${process.pid} receives message! ${names.length} characters`
+      );
+
+      const dump = fs.readFileSync(dump_file_name).toString().split("\n");
+
+      console.log(
+        `Finished reading dump in worker ${process.pid}, ${
+          dump.length - 2 - 3
+        } entries`
+      );
+
+      for (let i = 2; i < dump.length - 3; i++) {
+        const [name, related, data] = dump[i].split("|").map((s) => s.trim());
+        kage.kBuhin.push(name, data);
+      }
+
+      const res = {} as { [key: string]: string };
+
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
+        // console.log(`W ${process.pid} ${i}/${names.length}`);
+        const polygons = new Polygons();
+        kage.makeGlyph(polygons, name);
+        // @ts-ignore
+        res[name] = postProcessPolygon(polygons.generateSVG());
+      }
+
+      // write to disk
+      const out = fs.openSync(output + `.${index}`, "w");
+
+      for (let key in res) {
+        fs.writeSync(out, `${key} ${res[key]}\n`);
+      }
+
+      //   process.send({ msg: { type: SVG_PATHS_MESSAGE, svg_paths: res } });
+      process.send({ msg: { type: END_MESSAGE } });
+
+      process.exit();
+    }
+  );
+};
+
 const run = (dump_file_name: string, output: string) => {
+  const workers = [];
   //   map of name to svg
-  const res = { svg_paths: {} } as {
-    side_length: number;
-    ts: string;
-    svg_paths: {
-      [key: string]: string;
-    };
-  };
+  const res = {} as { [key: string]: string };
 
   const dump = fs.readFileSync(dump_file_name).toString().split("\n");
-
-  console.log(`Finished reading dump, ${dump.length - 2 - 3} entries`);
+  const entries = dump.length - 2 - 3;
+  console.log(`Finished reading dump, ${entries} entries`);
 
   const names = [];
   for (let i = 2; i < dump.length - 3; i++) {
     const [name, related, data] = dump[i].split("|").map((s) => s.trim());
     names.push(name);
-    kage.kBuhin.push(name, data);
+    // kage.kBuhin.push(name, data);
   }
 
-  /* {
-    const polygons = new Polygons();
-    kage.makeGlyph(polygons, "hkcs_m31184");
-    const svg = polygons.generateSVG(GENERATE_CURVE);
-    // console.log(svg);
-    console.log(postProcess(svg, GENERATE_CURVE));
-    console.log("gabagool");
-  } */
+  //   const chunkedNames = chunk(names.slice(0, 12), 12 / numCPUs);
+  const chunkedNames = chunk(names, names.length / numCPUs);
 
-  //   return;
+  let pendingWorkers = numCPUs;
 
-  for (let i = 0; i < names.length; i++) {
+  const finish = () => {
+    console.log("Writing metadata.");
+    const out = fs.createWriteStream(output + ".meta", {
+      flags: "w",
+    });
+
+    out.write(`${new Date().toISOString()} ${200 * SCALE_FACTOR} ${entries}\n`);
+
+    // for (let key in res) out.write(`${key} ${res[key]}\n`);
+  };
+
+  for (let i = 0; i < numCPUs; i++) {
+    console.log(`Forking process number ${i}...`);
+    const worker = cluster.fork();
+    workers.push(worker);
+
+    /* worker.on(
+      "message",
+      ({ msg: svg_paths }: { msg: { [key: string]: string } }) => {
+        console.log(`Worker ${worker.process.pid} done.`);
+        for (let key in svg_paths) res[key] = svg_paths[key];
+        pendingWorkers -= 1;
+        if (pendingWorkers === 0) finish();
+      }
+    ); */
+
+    worker.on("message", ({ msg }) => {
+      /* if (msg.type === SVG_PATHS_MESSAGE) {
+        console.log("received workers svg path message");
+        for (let key in msg.svg_paths) res[key] = msg.svg_paths[key];
+      } else  */
+      if (msg.type === END_MESSAGE) {
+        pendingWorkers -= 1;
+        if (pendingWorkers === 0) finish();
+      }
+    });
+
+    worker.send({
+      msg: { index: i, output, dump_file_name, names: chunkedNames[i] },
+    });
+  }
+
+  /* for (let i = 0; i < names.length; i++) {
     const name = names[i];
     console.log(`${i}/${names.length}`);
     const polygons = new Polygons();
@@ -199,26 +218,17 @@ const run = (dump_file_name: string, output: string) => {
 
   res.ts = new Date().toISOString();
   res.side_length = 200 * SCALE_FACTOR;
-
-  fs.writeFileSync(output, JSON.stringify(res));
-
-  /* let polygons = new Polygons();
-  kage.makeGlyph(polygons, "zzzfelis_livermorium");
-  //   @ts-ignore
-  console.log(polygons.generateSVG());
-
-  polygons = new Polygons();
-  kage.makeGlyph(polygons, "u0000");
-  //   @ts-ignore
-  console.log(polygons.generateSVG()); */
-
-  //   postProcess(TEST_SVG);
+  fs.writeFileSync(output, JSON.stringify(res)); */
 };
 
-program
-  .arguments("<dump_newest_only.txt> <output.json>")
-  .description("glyphwiki-gensvg <path to dump_newest_only.txt> <output.json>")
-  .action((dump_file_name, output) => {
-    run(dump_file_name, output);
-  })
-  .parse(process.argv);
+if (cluster.isMaster)
+  program
+    .arguments("<dump_newest_only.txt> <output.json>")
+    .description(
+      "glyphwiki-gensvg <path to dump_newest_only.txt> <output.json>"
+    )
+    .action((dump_file_name, output) => {
+      run(dump_file_name, output);
+    })
+    .parse(process.argv);
+else workerProcess();
