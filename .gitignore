@@ -24,9 +24,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# etl
-etl/cache
-
-public/json
-
-/cypress/integration/examples
+# generated txt files
+*.txt*
+/glyphwiki_dump
+dump.tar.gz

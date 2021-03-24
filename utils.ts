@@ -8,7 +8,7 @@ export function precisionRound(number: number, precision: number) {
 }
 
 export const SCALE_FACTOR = 5;
-export const postProcessPolygon = (svg: string) => {
+export const postProcessPolygon = (svg: string, is_mincho: boolean) => {
   const parsedSVG = parse(svg);
   const polygonsPoints = parsedSVG.children[0].children[0].children
     .filter(({ tagName }) => tagName === "polygon")
@@ -76,13 +76,15 @@ export const postProcessPolygon = (svg: string) => {
     return res;
   };
 
-  const co = new ClipperLib.ClipperOffset(2, 0.25);
-  co.AddPaths(
-    paths,
-    ClipperLib.JoinType.jtRound,
-    ClipperLib.EndType.etClosedPolygon
-  );
-  co.Execute(paths, 1.8);
+  if (is_mincho) {
+    const co = new ClipperLib.ClipperOffset(2, 0.25);
+    co.AddPaths(
+      paths,
+      ClipperLib.JoinType.jtRound,
+      ClipperLib.EndType.etClosedPolygon
+    );
+    co.Execute(paths, 1.8);
+  }
 
   let res = [];
   try {
