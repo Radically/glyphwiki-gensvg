@@ -5,14 +5,13 @@ import * as os from "os";
 import * as fs from "fs";
 import * as cluster from "cluster";
 import * as ClipperLib from "clipper-lib";
-import { precisionRound, postProcessPolygon } from "./utils";
+import { precisionRound, postProcessPolygon, SCALE_FACTOR } from "./utils";
 
 const numCPUs = os.cpus().length;
 
 const kage = new Kage();
 const program = new Command();
 
-const SCALE_FACTOR = 4;
 const GENERATE_CURVE = false;
 const TEST_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" baseProfile="full" viewBox="0 0 200 200" width="200" height="200">
@@ -92,12 +91,13 @@ const workerProcess = () => {
   process.on(
     "message",
     function ({
-      msg: { index, output, names, dump_file_name },
+      msg: { index, output, names, dump_file_name, dump_all_file_name },
     }: {
       msg: {
         index: number;
         output: string;
         dump_file_name: string;
+        dump_all_file_name: string;
         names: string[];
       };
     }) {
@@ -115,6 +115,23 @@ const workerProcess = () => {
 
       for (let i = 2; i < dump.length - 3; i++) {
         const [name, related, data] = dump[i].split("|").map((s) => s.trim());
+        kage.kBuhin.push(name, data);
+      }
+
+      const dumpAll = fs
+        .readFileSync(dump_all_file_name)
+        .toString()
+        .split("\n");
+      console.log(
+        `Finished reading dumpAll in worker ${process.pid}, ${
+          dumpAll.length - 2 - 3
+        } entries`
+      );
+
+      for (let i = 2; i < dumpAll.length - 3; i++) {
+        const [name, related, data] = dumpAll[i]
+          .split("|")
+          .map((s) => s.trim());
         kage.kBuhin.push(name, data);
       }
 
@@ -144,7 +161,11 @@ const workerProcess = () => {
   );
 };
 
-const run = (dump_file_name: string, output: string) => {
+const run = (
+  dump_file_name: string,
+  dump_all_file_name: string,
+  output: string
+) => {
   const workers = [];
   //   map of name to svg
   const res = {} as { [key: string]: string };
@@ -203,7 +224,13 @@ const run = (dump_file_name: string, output: string) => {
     });
 
     worker.send({
-      msg: { index: i, output, dump_file_name, names: chunkedNames[i] },
+      msg: {
+        index: i,
+        output,
+        dump_file_name,
+        dump_all_file_name,
+        names: chunkedNames[i],
+      },
     });
   }
 
@@ -223,12 +250,12 @@ const run = (dump_file_name: string, output: string) => {
 
 if (cluster.isMaster)
   program
-    .arguments("<dump_newest_only.txt> <output.json>")
+    .arguments("<dump_newest_only.txt> <dump_all_versions.txt> <output.json>")
     .description(
-      "glyphwiki-gensvg <path to dump_newest_only.txt> <output.json>"
+      "glyphwiki-gensvg <path to dump_newest_only.txt> <path to dump_all_versions.txt> <output.json>"
     )
-    .action((dump_file_name, output) => {
-      run(dump_file_name, output);
+    .action((dump_file_name, dump_all_versions, output) => {
+      run(dump_file_name, dump_all_versions, output);
     })
     .parse(process.argv);
 else workerProcess();

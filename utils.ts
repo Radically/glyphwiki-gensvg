@@ -7,7 +7,7 @@ export function precisionRound(number: number, precision: number) {
   return Math.round(n * factor) / factor;
 }
 
-const SCALE_FACTOR = 4;
+export const SCALE_FACTOR = 5;
 export const postProcessPolygon = (svg: string) => {
   const parsedSVG = parse(svg);
   const polygonsPoints = parsedSVG.children[0].children[0].children
@@ -75,6 +75,14 @@ export const postProcessPolygon = (svg: string) => {
     }
     return res;
   };
+
+  const co = new ClipperLib.ClipperOffset(2, 0.25);
+  co.AddPaths(
+    paths,
+    ClipperLib.JoinType.jtRound,
+    ClipperLib.EndType.etClosedPolygon
+  );
+  co.Execute(paths, 1.8);
 
   let res = [];
   try {
