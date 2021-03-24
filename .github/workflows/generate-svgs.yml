@@ -25,10 +25,10 @@ jobs:
       - run: sudo apt install wget
       - run: npm ci
       - run: sh fetch_dump.sh
-      - run: TEST_RUN=true npm run start 2 1 glyphwiki_dump/dump_newest_only.txt glyphwiki_dump/dump_all_versions_noescape.txt glyphwiki_mincho.txt
+      - run: TEST_RUN=false npm run start 2 1 glyphwiki_dump/dump_newest_only.txt glyphwiki_dump/dump_all_versions_noescape.txt glyphwiki_mincho.txt
       - run: cat glyphwiki_mincho.txt.* > glyphwiki_mincho.txt
       - run: gzip glyphwiki_mincho.txt
-      - run: TEST_RUN=true npm run start 2 0 glyphwiki_dump/dump_newest_only.txt glyphwiki_dump/dump_all_versions_noescape.txt glyphwiki_gothic.txt
+      - run: TEST_RUN=false npm run start 2 0 glyphwiki_dump/dump_newest_only.txt glyphwiki_dump/dump_all_versions_noescape.txt glyphwiki_gothic.txt
       - run: cat glyphwiki_gothic.txt.* > glyphwiki_gothic.txt
       - run: gzip glyphwiki_gothic.txt
       - name: Release
