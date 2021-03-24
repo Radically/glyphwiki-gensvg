@@ -7,11 +7,7 @@ name: Generate MinchoTai
 #   run:
 #     working-directory: test
 
-on:
-  push:
-    branches: [master, testing]
-  pull_request:
-    branches: [master, testing]
+on: [push]
 
 jobs:
   build:
