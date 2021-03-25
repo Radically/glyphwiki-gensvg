@@ -34,7 +34,7 @@ const run = (
 
   const svg = polygons.generateSVG(false);
   console.log(svg);
-  console.log(postProcessPolygon(svg, false));
+  console.log(postProcessPolygon(svg, false, false));
 };
 
 program

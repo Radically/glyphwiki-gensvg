@@ -30,6 +30,7 @@ const workerProcess = () => {
       msg: {
         index,
         is_mincho,
+        offset,
         output,
         names,
         dump_file_name,
@@ -39,6 +40,7 @@ const workerProcess = () => {
       msg: {
         index: number;
         is_mincho: number;
+        offset: number;
         output: string;
         dump_file_name: string;
         dump_all_file_name: string;
@@ -88,8 +90,12 @@ const workerProcess = () => {
         // console.log(`W ${process.pid} ${i}/${names.length}`);
         const polygons = new Polygons();
         kage.makeGlyph(polygons, name);
-        // @ts-ignore
-        res[name] = postProcessPolygon(polygons.generateSVG(), !!is_mincho);
+        res[name] = postProcessPolygon(
+          // @ts-ignore
+          polygons.generateSVG(),
+          !!is_mincho,
+          !!offset
+        );
       }
 
       // write to disk
@@ -110,6 +116,7 @@ const workerProcess = () => {
 const run = (
   dump_file_name: string,
   is_mincho: number,
+  offset: number,
   dump_all_file_name: string,
   output: string,
   numCPUs: number
@@ -175,6 +182,7 @@ const run = (
       msg: {
         index: i,
         is_mincho,
+        offset,
         output,
         dump_file_name,
         dump_all_file_name,
@@ -200,16 +208,24 @@ const run = (
 if (cluster.isMaster)
   program
     .arguments(
-      "<numThreads> <gothic> <dump_newest_only.txt> <dump_all_versions.txt> <output.json>"
+      "<numThreads> <mincho/gothic> <offset> <dump_newest_only.txt> <dump_all_versions.txt> <output.json>"
     )
     .description(
-      "glyphwiki-gensvg <numThreads> <1 for mincho, 0 for gothic> <path to dump_newest_only.txt> <path to dump_all_versions.txt> <output.json>"
+      "glyphwiki-gensvg <numThreads> <1 for mincho, 0 for gothic> <1 to faux bold if mincho is enabled, 0 otherwise> <path to dump_newest_only.txt> <path to dump_all_versions.txt> <output.json>"
     )
     .action(
-      (numThreads, is_mincho, dump_file_name, dump_all_versions, output) => {
+      (
+        numThreads,
+        is_mincho,
+        offset,
+        dump_file_name,
+        dump_all_versions,
+        output
+      ) => {
         run(
           dump_file_name,
           Number(is_mincho),
+          Number(offset),
           dump_all_versions,
           output,
           Number(numThreads)
